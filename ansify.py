@@ -147,7 +147,7 @@ def cache_all_colors():
 						'g': int( block_char['g'] ), 
 						'b': int( block_char['b'] ), 
 					}
-					d = color_distance_new(block_char_color, desired_color)
+					d = color_distance(block_char_color, desired_color)
 					if d < closest_dist:
 						closest_dist = d
 						closest_color_index = i
@@ -158,7 +158,7 @@ def cache_all_colors():
 
 
 #@timing
-def closest_ansi_color_new(desired_color,options):
+def closest_ansi_color(desired_color,options):
 	# Change RGB color value into a string we can use as a dict key
 	desired_color = { 
 		'r': desired_color[0], 
@@ -182,7 +182,7 @@ def closest_ansi_color_new(desired_color,options):
 				'g': int( block_char['g'] ), 
 				'b': int( block_char['b'] ), 
 			}
-			d = color_distance_new(block_char_color, desired_color)
+			d = color_distance(block_char_color, desired_color)
 			if d < closest_dist:
 				closest_dist = d
 				closest_color_index = i
@@ -193,7 +193,7 @@ def closest_ansi_color_new(desired_color,options):
 # New algorithm for calculating color distance
 # Much faster, and much better color matching.
 # Adapted from this stackoverflow answer: http://stackoverflow.com/a/2103422/566307
-def color_distance_new( e1, e2 ):
+def color_distance( e1, e2 ):
 	rmean = ( e1['r'] + e2['r'] ) / 2;
 	r = e1['r'] - e2['r'];
 	g = e1['g'] - e2['g'];
@@ -203,10 +203,41 @@ def color_distance_new( e1, e2 ):
 	return (((512+rmean)*r*r)>>8) + 4*g*g + (((767-rmean)*b*b)>>8);
 
 
+# Print single frame/image to console
+def print_frame(o,options):
+	# Output to console (unicode)
+	print o
+	#print get_frame_rate(stream)
+
+
+
+# Save single frame/image to ANSI file with SAUCE 
+def save_frame(o,options):
+	if options['output_file'] is not sys.stdout:
+		# Replace Unicode shaded blocks with ANSI CP437 equivalents
+		lines = o.splitlines()
+		height = len(lines)
+		o = o.encode('cp437')
+		o.replace( u'\u2591'.encode('cp437'), chr(176) )
+		o.replace( u'\u2592'.encode('cp437'), chr(177) )
+		o.replace( u'\u2593'.encode('cp437'), chr(178) )
+		o.replace( u'\u2588'.encode('cp437'), chr(219) )
+# 		output_file = 'frames/frame-%04d.ans' % i
+		nfo = sauce.SAUCE(data=o)
+		nfo.datatype = 'Character'
+		nfo.filetype = 'Ansi'
+		nfo.date = datetime.datetime.now()
+		nfo.tinfo1 = options['output_width']  #TInfo1 for Character/ANSI is width
+		nfo.tinfo2 = height  #TInfo2 for Character/ANSI is height
+# 		nfo.tinfo2 = options['output_height']  #TInfo2 for Character/ANSI is height
+		nfo.write( options['output_file'] )
+
+
 #@timing
 def convert_image(options):
-
-# 	options['cache'] = json.load(open('color_cache.json'))
+	print 'loading cache'
+	options['cache'] = json.load(open('color_cache.json'))
+	print 'beginning conversion'
 
 	# render an image as ASCII by converting it to RGBA then using the
 	# color lookup table to find the closest colors, then filling with 
@@ -220,15 +251,25 @@ def convert_image(options):
 	original_width = float(im.size[0])
 	original_height = float(im.size[1])
 
-	output_max_width = float(options['output_width'] - 1)
-	output_max_height = float(options['output_height'])
+	if options['output_width']:
+		output_max_width = float(options['output_width'] - 1)
+	# If no width is specified, use original so that we'll get a factor of 1
+	else:
+		output_max_width = original_width
 
-	# Using the typical ANSI character set, we should shrink image vertically
-	# so that the tall characters don't distort the image
+	if options['output_height']:
+		output_max_height = float(options['output_height'])
+	# If no height is specified, use original so that we'll get a factor of 1
+	else:
+		output_max_height = original_height
+
+	# If using the typical 8x8 ANSI font, we should compress image vertically
+	# so that the tall ANSI characters don't cause output to look stretched
 	if options['output_width'] == 80:
 		aspect_ratio = 0.5
 	else:
-		aspect_ratio = 0.5
+		aspect_ratio = 1
+
 	original_height = original_height * aspect_ratio
 
 
@@ -260,7 +301,7 @@ def convert_image(options):
 # 		if im.mode == 'RGBA' and p[3] == 0:
 # 			o += ' '
 		else:
-			this_char = closest_ansi_color_new( p, options )
+			this_char = closest_ansi_color( p, options )
 			#print str(this_char) + ' | ' + str(last_char)
 			c = return_ansi_code( this_char, last_char )
 			o += c
@@ -270,27 +311,11 @@ def convert_image(options):
 
 	# Save to ANSI file
 	if options['output_file'] is not sys.stdout:
-		# Replace Unicode shaded blocks with ANSI CP437 equivalents
-		o = o.encode('cp437')
-		o.replace( u'\u2591'.encode('cp437'), chr(176) )
-		o.replace( u'\u2592'.encode('cp437'), chr(177) )
-		o.replace( u'\u2593'.encode('cp437'), chr(178) )
-		o.replace( u'\u2588'.encode('cp437'), chr(219) )
-		# Add SAUCE information. Mostly important for art wider than 80px
-		nfo = sauce.SAUCE(data=o)
-		nfo.datatype = 'Character'
-		nfo.filetype = 'Ansi'
-		nfo.date = datetime.datetime.now()
-		nfo.tinfo1 = options['output_width']  #TInfo1 for Character/ANSI is width
-		nfo.tinfo2 = options['output_height']  #TInfo2 for Character/ANSI is height
-		nfo.write( options['output_file'] )
-		#output_file = open(output_file, 'wb')
-		#output_file.write(o)
-		#output_file.close()
+		save_frame(o,options)
 
 	# Output to console (unicode)
 	else:
-		print o
+		print_frame(o,options)
 
 # 	json.dump(options['cache'], open('color_cache.json','w'))
 
@@ -327,7 +352,7 @@ if __name__ == '__main__':
 		'-oh',
 		'--output_height',
 		nargs='?',
-		default=24,
+		default=None,
 		help='Height of output'
 	)
 

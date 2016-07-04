@@ -10,7 +10,14 @@ import sauce
 import datetime
 import ujson as json
 from ansidefs import ANSI_SHADED_BLOCKS, UNICODE_SHADED_BLOCKS, ANSI_SHADED_BLOCKS_TO_RGB, ANSI_RESET, INFINITY
-from ansify import timing,foreground_code, background_code, return_ansi_code, closest_ansi_color_new, color_distance_new
+from ansify import timing,foreground_code, background_code, return_ansi_code, closest_ansi_color, color_distance, print_frame, save_frame
+
+def is_number(s):
+	try:
+		complex(s) # for int, long, float and complex
+	except ValueError:
+		return False
+	return True
 
 def get_frame_rate(stream):
 	if stream.average_rate.denominator and stream.average_rate.numerator:
@@ -30,7 +37,7 @@ def convert_frame(frame, options):
 
 	# Using the typical ANSI character set, we should shrink image vertically
 	# so that the tall characters don't distort the image
-	if options['output_width'] == 80:
+	if options['output_font'] == '8x16':
 		aspect_ratio = 0.5
 	else:
 		aspect_ratio = 1
@@ -44,18 +51,6 @@ def convert_frame(frame, options):
 
 	output_width = int(original_width * output_factor)
 	output_height = int(original_height * output_factor)
-
-#  	print '\033[0m\n'
-# 	print 'orig_w: ' + str(original_width)
-# 	print 'orig_h: ' + str(original_height)
-# 	print 'out_max_w: ' + str(output_max_width)
-# 	print 'out_max_h: ' + str(output_max_height)
-# 	print 'h_factor: ' + str(h_factor)
-# 	print 'v_factor: ' + str(v_factor)
-# 	print 'out_factor: ' + str(output_factor)
-# 	print 'out_w: ' + str(output_width)
-# 	print 'out_h: ' + str(output_height)
-
 
 #  	print '\033[0m\n' + str(output_factor) + ' | ' + str(output_width) + ', ' + str(output_height)
 
@@ -84,81 +79,91 @@ def convert_frame(frame, options):
 # 		if im.mode == 'RGBA' and p[3] == 0:
 # 			o += ' '
 		else:
-			this_char = closest_ansi_color_new(p,options)
+			this_char = closest_ansi_color(p,options)
 			#print str(this_char) + ' | ' + str(last_char)
 			c = return_ansi_code(this_char,last_char)
 			o += c
 			last_char = this_char
 	return o
 
-#@timing
-def print_frame(o,options):
-	# Output to console (unicode)
-	print o
-	#print get_frame_rate(stream)
-
-# def write_animation_frame(o,options):
-# 	if options['output_file'] is not sys.stdout:
-# 		# Replace Unicode shaded blocks with ANSI CP437 equivalents
-# 		o = o.encode('cp437')
-# 		o.replace( u'\u2591'.encode('cp437'), chr(176) )
-# 		o.replace( u'\u2592'.encode('cp437'), chr(177) )
-# 		o.replace( u'\u2593'.encode('cp437'), chr(178) )
-# 		o.replace( u'\u2588'.encode('cp437'), chr(219) )
-# 		output_file = open(options['output_file'], 'ab')
-# 		output_file.write(o)
-# 		output_file.close()
 
 
-def write_animation_frame(o,i,options):
+
+# This function is used for writing an animation chunk by chunk.
+# Appends to an existing file, which will need to have been created.
+# Will NOT write SAUCE record.
+def save_animation_chunk(o,options):
 	if options['output_file'] is not sys.stdout:
 		# Replace Unicode shaded blocks with ANSI CP437 equivalents
-		lines = o.splitlines()
-		height = len(lines)
 		o = o.encode('cp437')
 		o.replace( u'\u2591'.encode('cp437'), chr(176) )
 		o.replace( u'\u2592'.encode('cp437'), chr(177) )
 		o.replace( u'\u2593'.encode('cp437'), chr(178) )
 		o.replace( u'\u2588'.encode('cp437'), chr(219) )
-		output_file = 'frames/frame-%04d.ans' % i
-		nfo = sauce.SAUCE(data=o)
-		nfo.datatype = 'Character'
-		nfo.filetype = 'Ansi'
-		nfo.date = datetime.datetime.now()
-		nfo.tinfo1 = options['output_width']  #TInfo1 for Character/ANSI is width
-		nfo.tinfo2 = height  #TInfo2 for Character/ANSI is height
-# 		nfo.tinfo2 = options['output_height']  #TInfo2 for Character/ANSI is height
-		nfo.write( output_file )
+		output_file = open(options['output_file'], 'ab')
+		output_file.write(o)
+		output_file.close()
+
+
+# Append SAUCE record to existing file
+def add_sauce(o,options):
+	# Determine the height by counting lines in a frame
+	# Determine the width by counting actual chars in a line
+	frames = o.split('\033[2j\033[H');
+	lines = frames[-1].splitlines()
+	cols = 0
+	for char in lines[1]:
+		if char in [ u'\u2591', u'\u2592', u'\u2593', u'\u2588' ]:
+			cols += 1
+	height = len(lines)
+	width = cols
+# 	print 'h: ' + str(height) + ' | w: ' + str(width)
+	# Add SAUCE information. Mostly important for art wider than 80px
+	ansi = sauce.SAUCE( options['output_file'] )
+	ansi.datatype = 'Character'
+	ansi.filetype = 'Ansimation'
+	ansi.date = datetime.datetime.now()
+	ansi.tinfo1 = width  #TInfo1 for Character/ANSI is width
+	ansi.tinfo2 = height  #TInfo2 for Character/ANSI is height
+	ansi.write( ansi )
 
 
 
-
-
+# Saves the entire animation at once, appends a SAUCE record
 def save_animation(o,options):
-	# Save to ANSI file
-	if options['output_file'] is not sys.stdout:
-# 		first_line = o.splitlines()[0]
-# 		width = len(first_line)
-# 		print width
-		# Replace Unicode shaded blocks with ANSI CP437 equivalents
-		o = o.encode('cp437')
-		o.replace( u'\u2591'.encode('cp437'), chr(176) )
-		o.replace( u'\u2592'.encode('cp437'), chr(177) )
-		o.replace( u'\u2593'.encode('cp437'), chr(178) )
-		o.replace( u'\u2588'.encode('cp437'), chr(219) )
-		# Add SAUCE information. Mostly important for art wider than 80px
-		nfo = sauce.SAUCE(data=o)
-		nfo.datatype = 'Character'
-		nfo.filetype = 'Ansimation'
-		nfo.date = datetime.datetime.now()
-		nfo.tinfo1 = options['output_width']  #TInfo1 for Character/ANSI is width
-		nfo.tinfo2 = options['output_height']  #TInfo2 for Character/ANSI is height
-		nfo.write(options['output_file'])
-# 		output_file = open(options['output_file'], 'ab')
-# 		output_file.write(o)
-# 		output_file.close()
+	# Determine the height by counting lines in a frame
+	# Determine the width by counting actual chars in a line
+	frames = o.split('\033[2j\033[H');
+	lines = frames[-1].splitlines()
+	cols = 0
+	for char in lines[1]:
+		if char in [ u'\u2591', u'\u2592', u'\u2593', u'\u2588' ]:
+			cols += 1
+	height = len(lines)
+	width = len(cols)
 
+	# Replace Unicode shaded blocks with ANSI CP437 equivalents
+	o = o.encode('cp437')
+	o.replace( u'\u2591'.encode('cp437'), chr(176) )
+	o.replace( u'\u2592'.encode('cp437'), chr(177) )
+	o.replace( u'\u2593'.encode('cp437'), chr(178) )
+	o.replace( u'\u2588'.encode('cp437'), chr(219) )
+	# Add SAUCE information. Very important for art wider than 80px
+	ansi = sauce.SAUCE( data=o )
+	ansi.datatype = 'Character'
+	ansi.filetype = 'Ansimation'
+	ansi.date = datetime.datetime.now()
+	ansi.tinfo1 = width  #TInfo1 for Character/ANSI is width
+	ansi.tinfo2 = height  #TInfo2 for Character/ANSI is height
+	ansi.write( options['output_file'] )
+
+
+
+
+
+# MAIN FUNCTION
 def convert_movie(options):
+	print 'Loading color cache'
 	options['cache'] = json.load(open('color_cache.json'))
 
 	print 'Importing clip'
@@ -173,15 +178,16 @@ def convert_movie(options):
 	# tfa1: 3:14-4:29, 195-269
 	# tfa2: 11:10-12:40, 670-760
 
-	skipToTime = 696
+	startTime = options['start_time']
 	fps = get_frame_rate(stream) #29.97002997
 	print fps
-	framesToSkip = int( skipToTime * fps )
+	framesToSkip = int( startTime * fps )
 # 	desiredFrameRate = 6
-	duration = 10
+	duration = options['duration']
 	durationFrames = duration * fps
 
 	all_frames = ''
+	last_frame = ''
 	for index, packet in enumerate( container.demux(stream) ):
 		for frame in packet.decode():
 			if (
@@ -193,19 +199,21 @@ def convert_movie(options):
 				if options['output_file'] is sys.stdout:
 					print_frame(o,options)
 				else:
-# 					print_frame(o,options)
-					write_animation_frame(o,frame.index,options)
+					print_frame(o,options)
+					# save_frame(o,frame.index,options)
 					# This is for the build-a-giant-blob approach
-					all_frames += o
+# 					all_frames += o
 					# This is the write-each-frame-and-flush-approach
-# 					write_animation_frame(o,options)
-# 					o = ''
+					save_animation_chunk(o,options)
+					last_frame = o
+					o = ''
 
+	add_sauce(last_frame,options)
 
 
 # This is for the build-a-giant-blob approach
-	if options['output_file'] is not sys.stdout:
-		save_animation(all_frames,options)
+# 	if options['output_file'] is not sys.stdout:
+# 		save_animation(all_frames,options)
 
 
 # 	json.dump(options['cache'], open('color_cache.json','w'))
@@ -218,34 +226,45 @@ if __name__ == '__main__':
 		'output_file': None,
 		'output_width': None,
 		'output_height': None,
+		'output_brightness': None,
+		'output_font': None,
+		'start_time': None,
+		'duration': None,
 		'cache': {},
 	}
 
 	parser = argparse.ArgumentParser()
 	parser.add_argument(
 		'filename',
-		help='File to convert to ASCII art'
+		help='File to convert to ANSI'
 	)
 	parser.add_argument(
 		'-o',
 		'--output_file',
 		nargs='?',
 		default=sys.stdout,
-		help='Path to the output file, defaults to stdout'
+		help='Path to the output file. Default: stdout'
 	)
 	parser.add_argument(
 		'-ow',
 		'--output_width',
 		nargs='?',
 		default=80,
-		help='Width of output'
+		help='Maximum width of output'
 	)
 	parser.add_argument(
 		'-oh',
 		'--output_height',
 		nargs='?',
 		default=24,
-		help='Height of output'
+		help='Maximum height of output'
+	)
+	parser.add_argument(
+		'-of',
+		'--output_font',
+		nargs='?',
+		default='8x16',
+		help='ANSI font size. Either 8x16 (default) or 8x8.'
 	)
 	parser.add_argument(
 		'-ob',
@@ -255,7 +274,21 @@ if __name__ == '__main__':
 		help='Brightness adjustment'
 	)
 
+	parser.add_argument(
+		'-s',
+		'--start_time',
+		nargs='?',
+		default=0,
+		help='Start time (in seconds). Default: 0'
+	)
 
+	parser.add_argument(
+		'-d',
+		'--duration',
+		nargs='?',
+		default=10,
+		help='Duration (in seconds). Default: 10'
+	)
 
 	args = parser.parse_args()
 
@@ -264,11 +297,23 @@ if __name__ == '__main__':
 	if args.output_file:
 		options['output_file'] = args.output_file
 	if args.output_width:
-		options['output_width'] = int(args.output_width)
+		if is_number(args.output_width):
+			options['output_width'] = int(args.output_width)
 	if args.output_height:
-		options['output_height'] = int(args.output_height)
+		if is_number(args.output_height):
+			options['output_height'] = int(args.output_height)
+	if args.output_font:
+		if args.output_font.lower() in ['8x16','8x8']:
+			options['output_font'] = args.output_font.lower()
 	if args.output_brightness:
-		options['output_brightness'] = float(args.output_brightness)
+		if is_number(args.output_brightness):
+			options['output_brightness'] = float(args.output_brightness)
+	if args.start_time:
+		if is_number(args.start_time):
+			options['start_time'] = float(args.start_time)
+	if args.duration:
+		if is_number(args.duration):
+			options['duration'] = float(args.duration)
 
 	print 'Running'
 	extension = os.path.splitext(args.filename)[1].replace('.','')
